@@ -1,0 +1,36 @@
+import { BrowserHomepageSections } from "@/components/home/BrowserHomepageSections";
+import { LanguageSection } from "@/components/home/LanguageSection";
+import { GenreSection } from "@/components/home/GenreSection";
+import { DiscoverySection } from "@/components/home/DiscoverySection";
+import { FadeIn } from "@/components/ui/FadeIn";
+import type { Metadata } from "next";
+import { getFallbackHomepageData } from "@/lib/api/client";
+
+import { createCanonicalMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = createCanonicalMetadata("/");
+
+const fallbackHomepageData = getFallbackHomepageData();
+
+export default function HomePage() {
+  return (
+    <>
+      <h1 className="sr-only">Hindi Anime – Watch Hindi Dubbed Anime Online</h1>
+      <BrowserHomepageSections
+        initialData={fallbackHomepageData}
+        initialDataGeneratedAt={0}
+      />
+
+      {/* 8. Other existing sections */}
+      <FadeIn>
+        <LanguageSection />
+      </FadeIn>
+      <FadeIn>
+        <GenreSection />
+      </FadeIn>
+      <FadeIn>
+        <DiscoverySection />
+      </FadeIn>
+    </>
+  );
+}

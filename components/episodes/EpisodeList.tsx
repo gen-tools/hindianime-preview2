@@ -1,0 +1,158 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Search } from "lucide-react";
+import type { Episode } from "@/types/episode";
+import type { EpisodeItem } from "@/types/api";
+import { cn } from "@/lib/utils";
+import { deduplicateEpisodes, getEpisodeIdentity } from "@/lib/episodes";
+import { getPublicSnapshotUrl, isPublicSnapshotApiEnabled } from "@/lib/api/worker-data";
+
+export function EpisodeList({
+  episodes: initialEpisodes,
+  animeSlug,
+  activeEpisodeId,
+  seasonNumber: propSeason,
+  autoFetchSynthetic = true,
+}: {
+  episodes: Episode[];
+  animeSlug: string;
+  activeEpisodeId?: string;
+  seasonNumber?: number;
+  autoFetchSynthetic?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const [episodes, setEpisodes] = useState<Episode[]>(initialEpisodes);
+
+  useEffect(() => {
+    setEpisodes(initialEpisodes);
+  }, [initialEpisodes]);
+
+  const season = propSeason || (() => {
+    const m = activeEpisodeId?.match(/ep-(\d+)-/);
+    return m ? parseInt(m[1], 10) : 1;
+  })();
+
+  // If initial episodes are empty or purely synthetic (no thumbnails or generic titles),
+  // fetch the real released episodes from the Worker snapshot endpoint.
+  useEffect(() => {
+    if (!autoFetchSynthetic) return;
+
+    const isSynthetic =
+      episodes.length === 0 ||
+      episodes.every(
+        (e) => !e.thumbnail || e.thumbnail === animeSlug || e.title === `Episode ${e.number}`
+      );
+
+    if (!isSynthetic) return;
+
+    const controller = new AbortController();
+
+    async function loadWorkerEpisodes() {
+      try {
+        const episodePath = `/data/episodes?slug=${encodeURIComponent(animeSlug)}&season=${season}`;
+        const endpoint = isPublicSnapshotApiEnabled()
+          ? getPublicSnapshotUrl(episodePath)
+          : `/api/anime-episodes?slug=${encodeURIComponent(animeSlug)}&season=${season}`;
+
+        const res = await fetch(endpoint, { signal: controller.signal });
+        if (!res.ok) return;
+
+        const payload = (await res.json()) as {
+          episodes?: EpisodeItem[];
+          results?: { episodes?: EpisodeItem[] };
+        };
+        const rawEps = payload.episodes || payload.results?.episodes || [];
+
+        if (Array.isArray(rawEps) && rawEps.length > 0) {
+          const mapped: Episode[] = rawEps.map((item, idx) => {
+            const parsedNum = parseInt(item.episode || item.season, 10);
+            const num = isNaN(parsedNum) || parsedNum < 1 ? idx + 1 : parsedNum;
+            const thumbnail =
+              typeof item.image === "string" && /^https?:\/\//i.test(item.image)
+                ? item.image
+                : "";
+
+            return {
+              id: `ep-${season}-${num}`,
+              animeSlug,
+              animeTitle: "",
+              animePoster: thumbnail,
+              season,
+              number: num,
+              title: item.title || `Episode ${num}`,
+              thumbnail,
+              durationMinutes: 24,
+              languages: ["hindi", "japanese"],
+              releasedAt: "",
+            };
+          });
+
+          setEpisodes(deduplicateEpisodes(mapped));
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+
+    void loadWorkerEpisodes();
+
+    return () => {
+      controller.abort(new DOMException("unmounted", "AbortError"));
+    };
+  }, [animeSlug, season, episodes.length, autoFetchSynthetic]);
+
+  const filtered = deduplicateEpisodes(episodes).filter(
+    (e) =>
+      String(e.number).includes(query) || e.title.toLowerCase().includes(query.toLowerCase())
+  );
+
+  return (
+    <div className="rounded-xl border border-border-line bg-surface p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h3 className="font-display text-base font-bold text-text-primary">Episodes</h3>
+          <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs font-semibold text-text-secondary border border-border-line">
+            {episodes.length} Episodes
+          </span>
+        </div>
+        <div className="relative w-40">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find episode"
+            aria-label="Search episodes"
+            className="focus-ring w-full rounded-lg border border-border-line bg-surface-elevated py-1.5 pl-8 pr-2 text-xs text-text-primary placeholder:text-text-muted focus:border-green-bright/70"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-5 gap-2 sm:grid-cols-6 md:grid-cols-8">
+        {filtered.map((ep) => {
+          const isActive = ep.id === activeEpisodeId;
+          return (
+            <a
+              key={getEpisodeIdentity(ep)}
+              href={`/watch/${animeSlug}/${ep.id}`}
+              aria-current={isActive ? "true" : undefined}
+              className={cn(
+                "focus-ring flex aspect-square items-center justify-center rounded-lg border text-sm font-semibold transition-colors",
+                isActive
+                  ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_0_1px_rgba(34,197,94,0.4)]"
+                  : "border-border-line bg-surface-elevated text-text-secondary hover:border-green-primary/50 hover:text-white"
+              )}
+            >
+              {String(ep.number).padStart(2, "0")}
+            </a>
+          );
+        })}
+      </div>
+
+      {filtered.length === 0 && (
+        <p className="py-6 text-center text-sm text-text-muted">No episodes match &quot;{query}&quot;.</p>
+      )}
+    </div>
+  );
+}
